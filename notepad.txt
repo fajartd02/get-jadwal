@@ -1,0 +1,6 @@
+delete dulu images di docker
+
+jalanin terminal:
+docker build -t "fajartd02-getjadwal:latest" .
+docker tag fajartd02-getjadwal fajartd02/getjadwal:latest
+docker push fajartd02/getjadwal:latest
