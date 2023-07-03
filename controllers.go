@@ -3,13 +3,17 @@ package main
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
+
+func ContainsAtSymbol(s string) bool {
+	return strings.IndexByte(s, '@') != -1
+}
 
 func CheckinEmail(db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -33,38 +37,23 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Check if the email is valid using a regular expression pattern
-		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{1,}$`)
-		if !emailRegex.MatchString(requestBody.Email) {
+		if !ContainsAtSymbol(requestBody.Email) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid email",
 			})
 		}
 
-		// Check if the email already exists in the database
-		var existingUser User
-		result := db.First(&existingUser, "email = ?", requestBody.Email)
-		if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"status":  "Error",
-				"message": "Failed to query database",
-			})
-		}
+		// Create a channel to receive the result
+		resultChan := make(chan *UserResult)
 
-		if result.Error == nil {
-			// Email already exists, return the existing record
-			return c.JSON(fiber.Map{
-				"status":  "Success",
-				"message": "Success",
-				"data": fiber.Map{
-					"id":        existingUser.ID,
-					"email":     existingUser.Email,
-					"updatedAt": existingUser.UpdatedAt,
-					"createdAt": existingUser.CreatedAt,
-				},
-			})
-		}
+		// Perform the email check in a goroutine
+		go func() {
+			var existingUser User
+			err := db.First(&existingUser, "email = ?", requestBody.Email).Error
+			result := &UserResult{User: existingUser, Error: err}
+			resultChan <- result
+		}()
 
 		// Create a new user record in the database
 		user := User{
@@ -73,8 +62,34 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		result = db.Create(&user)
-		if result.Error != nil {
+		err := db.Create(&user).Error
+
+		// Wait for the email check result
+		result := <-resultChan
+
+		// Handle the email check result
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"status":  "Error",
+				"message": "Failed to query database",
+			})
+		}
+
+		if result.User.ID != 0 {
+			// Email already exists, return the existing record
+			return c.JSON(fiber.Map{
+				"status":  "Success",
+				"message": "Success",
+				"data": fiber.Map{
+					"id":        result.User.ID,
+					"email":     result.User.Email,
+					"updatedAt": result.User.UpdatedAt,
+					"createdAt": result.User.CreatedAt,
+				},
+			})
+		}
+
+		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"status":  "Error",
 				"message": "Failed to create user record",
@@ -95,6 +110,12 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 	}
 }
 
+// UserResult holds the result of the email check
+type UserResult struct {
+	User  User
+	Error error
+}
+
 func AddSchedule(db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Get the email parameter from the query string
@@ -107,8 +128,7 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{1,}$`)
-		if !emailRegex.MatchString(email) {
+		if !ContainsAtSymbol(email) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid email",
@@ -210,9 +230,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Check if the email is valid using a regular expression pattern
-		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{1,}$`)
-		if !emailRegex.MatchString(email) {
+		if !ContainsAtSymbol(email) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid email",
@@ -303,8 +321,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{1,}$`)
-		if !emailRegex.MatchString(email) {
+		if !ContainsAtSymbol(email) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid email",
@@ -407,8 +424,7 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{1,}$`)
-		if !emailRegex.MatchString(email) {
+		if !ContainsAtSymbol(email) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid email",
