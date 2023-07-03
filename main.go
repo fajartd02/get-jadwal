@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
@@ -13,6 +14,9 @@ import (
 func main() {
 	// Load the environment variables from .env file
 	godotenv.Load()
+
+	n := runtime.NumCPU()
+	runtime.GOMAXPROCS(n)
 
 	// Open a connection to the MySQL database
 	dsn := os.Getenv("MYSQL_USER") + ":" + os.Getenv("MYSQL_PASSWORD") + "@tcp(" +
