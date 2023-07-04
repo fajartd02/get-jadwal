@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -32,7 +33,7 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			Email string `json:"email"`
 		}
 
-		if err := c.BodyParser(&requestBody); err != nil {
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -138,7 +139,7 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			Day   string `json:"day"`
 		}
 
-		if err := c.BodyParser(&requestBody); err != nil {
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -374,7 +375,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		var requestBody struct {
 			Title string `json:"title"`
 		}
-		if err := c.BodyParser(&requestBody); err != nil {
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -391,8 +392,11 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		// Update the schedule title
 		schedule.Title = requestBody.Title
 
-		// Save the updated schedule to the database
-		db.Save(&schedule)
+		go func() {
+			// Save the updated schedule to the database
+			db.Save(&schedule)
+
+		}()
 
 		// Return the updated schedule as the response
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -480,7 +484,9 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Delete the schedule from the database
-		db.Delete(&schedule)
+		go func() {
+			db.Delete(&schedule)
+		}()
 
 		// Return a success response
 		return c.JSON(fiber.Map{
