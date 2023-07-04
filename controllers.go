@@ -392,11 +392,8 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		// Update the schedule title
 		schedule.Title = requestBody.Title
 
-		go func() {
-			// Save the updated schedule to the database
-			db.Save(&schedule)
-
-		}()
+		// Save the updated schedule to the database
+		db.Save(&schedule)
 
 		// Return the updated schedule as the response
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -484,9 +481,7 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Delete the schedule from the database
-		go func() {
-			db.Delete(&schedule)
-		}()
+		db.Delete(&schedule)
 
 		// Return a success response
 		return c.JSON(fiber.Map{
