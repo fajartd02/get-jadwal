@@ -187,9 +187,6 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 		}
 		db.Create(&schedule)
 
-		cacheUser.ScheduleCache = append(cacheUser.ScheduleCache, schedule)
-		userCache[email] = cacheUser
-
 		// Return the response
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"status":  "Success",
@@ -347,8 +344,10 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Retrieve the user based on the email
-		cacheUser, ok := userCache[email]
-		if !ok {
+		var user User
+		result = db.Where("email = ?", email).First(&user)
+		if result.Error != nil {
+			// User not found
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -356,7 +355,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Check if the schedule belongs to the user
-		if schedule.UserID != cacheUser.UserIDCache {
+		if schedule.UserID != user.ID {
 			// Access denied
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"status":  "Forbidden",
@@ -455,8 +454,10 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Retrieve the user based on the email
-		cacheUser, ok := userCache[email]
-		if !ok {
+		var user User
+		result = db.Where("email = ?", email).First(&user)
+		if result.Error != nil {
+			// User not found
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -464,7 +465,7 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Check if the schedule belongs to the user
-		if schedule.UserID != cacheUser.UserIDCache {
+		if schedule.UserID != user.ID {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"status":  "Forbidden",
 				"message": "Access denied!",
@@ -473,13 +474,6 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 
 		// Delete the schedule from the database
 		db.Delete(&schedule)
-		userCache[email] = UserCache{
-			UserIDCache:    cacheUser.UserIDCache,
-			EmailCache:     cacheUser.EmailCache,
-			ScheduleCache:  []Schedule{},
-			CreatedAtCache: cacheUser.CreatedAtCache,
-			UpdatedAtCache: cacheUser.UpdatedAtCache,
-		}
 
 		// Return a success response
 		return c.JSON(fiber.Map{
