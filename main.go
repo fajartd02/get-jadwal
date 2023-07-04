@@ -34,6 +34,20 @@ func main() {
 
 	// Initialize the Fiber app
 	app := fiber.New()
+	// Fetch all users and their schedules from the database
+	var users []User
+	db.Preload("Schedules").Find(&users)
+
+	// Populate the userCache map
+	for _, user := range users {
+		userCache[user.Email] = UserCache{
+			EmailCache:     user.Email,
+			UserIDCache:    user.ID,
+			ScheduleCache:  user.Schedules,
+			CreatedAtCache: user.CreatedAt,
+			UpdatedAtCache: user.UpdatedAt,
+		}
+	}
 
 	// Define the routes
 	app.Post("/checkin", CheckinEmail(db))

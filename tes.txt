@@ -1,0 +1,34 @@
+// Check if the email already exists in the database
+		var existingUser User
+		result := db.First(&existingUser, "email = ?", requestBody.Email)
+		if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"status":  "Error",
+				"message": "Failed to query database",
+			})
+		}
+
+		if result.Error == nil {
+			// Email already exists, return the existing record
+			return c.JSON(fiber.Map{
+				"status":  "Success",
+				"message": "Success",
+				"data": fiber.Map{
+					"id":        existingUser.ID,
+					"email":     existingUser.Email,
+					"updatedAt": existingUser.UpdatedAt,
+					"createdAt": existingUser.CreatedAt,
+				},
+			})
+		}
+
+				// Retrieve the user based on the given email
+		var user User
+		result := db.Preload("Schedules").Where("email = ?", email).First(&user)
+		if result.Error != nil {
+			// Handle the error if any
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"status":  "Not Found",
+				"message": "Email is not found",
+			})
+		}

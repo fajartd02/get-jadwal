@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -11,6 +10,16 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
+
+type UserCache struct {
+	UserIDCache    uint64
+	EmailCache     string
+	ScheduleCache  []Schedule
+	CreatedAtCache time.Time
+	UpdatedAtCache time.Time
+}
+
+var userCache = make(map[string]UserCache)
 
 func ContainsAtSymbol(s string) bool {
 	return strings.IndexByte(s, '@') != -1
@@ -23,7 +32,7 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			Email string `json:"email"`
 		}
 
-		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
+		if err := c.BodyParser(&requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -45,19 +54,19 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Create a channel to receive the result
-		resultChan := make(chan *UserResult)
-
-		// Perform the email check in a goroutine
-		go func() {
-			var existingUser User
-			err := db.First(&existingUser, "email = ?", requestBody.Email).Error
-			// db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-			// 	return tx.First(&existingUser, "email = ?", requestBody.Email)
-			// })
-			result := &UserResult{User: existingUser, Error: err}
-			resultChan <- result
-		}()
+		cacheUser, ok := userCache[requestBody.Email]
+		if ok {
+			return c.JSON(fiber.Map{
+				"status":  "Success",
+				"message": "Success",
+				"data": fiber.Map{
+					"id":        cacheUser.UserIDCache,
+					"email":     cacheUser.EmailCache,
+					"updatedAt": cacheUser.UpdatedAtCache,
+					"createdAt": cacheUser.CreatedAtCache,
+				},
+			})
+		}
 
 		// Create a new user record in the database
 		user := User{
@@ -66,38 +75,20 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		err := db.Create(&user).Error
-
-		// Wait for the email check result
-		result := <-resultChan
-
-		// Handle the email check result
-		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"status":  "Error",
-				"message": "Failed to query database",
-			})
-		}
-
-		if result.User.ID != 0 {
-			// Email already exists, return the existing record
-			return c.JSON(fiber.Map{
-				"status":  "Success",
-				"message": "Success",
-				"data": fiber.Map{
-					"id":        result.User.ID,
-					"email":     result.User.Email,
-					"updatedAt": result.User.UpdatedAt,
-					"createdAt": result.User.CreatedAt,
-				},
-			})
-		}
-
-		if err != nil {
+		result := db.Create(&user)
+		if result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"status":  "Error",
 				"message": "Failed to create user record",
 			})
+		}
+
+		userCache[requestBody.Email] = UserCache{
+			EmailCache:     requestBody.Email,
+			UserIDCache:    user.ID,
+			ScheduleCache:  []Schedule{},
+			CreatedAtCache: user.CreatedAt,
+			UpdatedAtCache: user.UpdatedAt,
 		}
 
 		// Return the response with the new user record
@@ -112,12 +103,6 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			},
 		})
 	}
-}
-
-// UserResult holds the result of the email check
-type UserResult struct {
-	User  User
-	Error error
 }
 
 func AddSchedule(db *gorm.DB) fiber.Handler {
@@ -139,10 +124,8 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Check if the user exists in the database
-		var user User
-		result := db.Where("email = ?", email).First(&user)
-		if result.Error != nil {
+		cacheUser, ok := userCache[email]
+		if !ok {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -194,27 +177,18 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Create a channel to receive the result of the goroutine
-		resultChan := make(chan error)
+		// Create a new schedule record for the user
 		schedule := Schedule{
 			Title:     requestBody.Title,
-			UserID:    user.ID,
+			UserID:    cacheUser.UserIDCache,
 			Day:       requestBody.Day,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		go func() {
-			err := db.Create(&schedule).Error
-			resultChan <- err
-		}()
+		db.Create(&schedule)
 
-		// Wait for the goroutine to finish and check the result
-		if err := <-resultChan; err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"status":  "Error",
-				"message": "Failed to create schedule",
-			})
-		}
+		cacheUser.ScheduleCache = append(cacheUser.ScheduleCache, schedule)
+		userCache[email] = cacheUser
 
 		// Return the response
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -272,7 +246,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			// Initialize all days of the week
 			daysOfWeek := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 			for _, day := range daysOfWeek {
-				scheduleByDay[day] = make([]Schedule, 0, len(user.Schedules))
+				scheduleByDay[day] = []Schedule{}
 			}
 
 			// Group the schedules by day
@@ -307,7 +281,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 		}
 
 		// Filter the schedules based on the given day
-		var schedules = make([]Schedule, 0, len(user.Schedules))
+		var schedules []Schedule
 		for _, schedule := range user.Schedules {
 			if schedule.Day == day {
 				schedules = append(schedules, schedule)
@@ -373,10 +347,8 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Retrieve the user based on the email
-		var user User
-		result = db.Where("email = ?", email).First(&user)
-		if result.Error != nil {
-			// User not found
+		cacheUser, ok := userCache[email]
+		if !ok {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -384,7 +356,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Check if the schedule belongs to the user
-		if schedule.UserID != user.ID {
+		if schedule.UserID != cacheUser.UserIDCache {
 			// Access denied
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"status":  "Forbidden",
@@ -396,7 +368,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		var requestBody struct {
 			Title string `json:"title"`
 		}
-		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
+		if err := c.BodyParser(&requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -483,10 +455,8 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Retrieve the user based on the email
-		var user User
-		result = db.Where("email = ?", email).First(&user)
-		if result.Error != nil {
-			// User not found
+		cacheUser, ok := userCache[email]
+		if !ok {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -494,7 +464,7 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 		}
 
 		// Check if the schedule belongs to the user
-		if schedule.UserID != user.ID {
+		if schedule.UserID != cacheUser.UserIDCache {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"status":  "Forbidden",
 				"message": "Access denied!",
@@ -503,6 +473,13 @@ func DeleteSchedule(db *gorm.DB) fiber.Handler {
 
 		// Delete the schedule from the database
 		db.Delete(&schedule)
+		userCache[email] = UserCache{
+			UserIDCache:    cacheUser.UserIDCache,
+			EmailCache:     cacheUser.EmailCache,
+			ScheduleCache:  []Schedule{},
+			CreatedAtCache: cacheUser.CreatedAtCache,
+			UpdatedAtCache: cacheUser.UpdatedAtCache,
+		}
 
 		// Return a success response
 		return c.JSON(fiber.Map{

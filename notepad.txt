@@ -4,3 +4,107 @@ jalanin terminal:
 docker build -t "fajartd02-getjadwal:latest" .
 docker tag fajartd02-getjadwal fajartd02/getjadwal:latest
 docker push fajartd02/getjadwal:latest
+
+
+go routine
+
+func CheckinEmail(db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Parse the request body
+		var requestBody struct {
+			Email string `json:"email"`
+		}
+
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"status":  "Bad Request",
+				"message": "Invalid request body",
+			})
+		}
+
+		// Check if the email is empty
+		if requestBody.Email == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"status":  "Bad Request",
+				"message": "Email is required",
+			})
+		}
+
+		if !ContainsAtSymbol(requestBody.Email) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"status":  "Bad Request",
+				"message": "Invalid email",
+			})
+		}
+
+		// Create a channel to receive the result
+		resultChan := make(chan *UserResult)
+
+		// Perform the email check in a goroutine
+		go func() {
+			var existingUser User
+			err := db.First(&existingUser, "email = ?", requestBody.Email).Error
+			result := &UserResult{User: existingUser, Error: err}
+			resultChan <- result
+		}()
+
+		// Create a new user record in the database
+		user := User{
+			Email:     requestBody.Email,
+			Schedules: nil,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		err := db.Create(&user).Error
+
+		// Wait for the email check result
+		result := <-resultChan
+
+		// Handle the email check result
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"status":  "Error",
+				"message": "Failed to query database",
+			})
+		}
+
+		if result.User.ID != 0 {
+			// Email already exists, return the existing record
+			return c.JSON(fiber.Map{
+				"status":  "Success",
+				"message": "Success",
+				"data": fiber.Map{
+					"id":        result.User.ID,
+					"email":     result.User.Email,
+					"updatedAt": result.User.UpdatedAt,
+					"createdAt": result.User.CreatedAt,
+				},
+			})
+		}
+
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"status":  "Error",
+				"message": "Failed to create user record",
+			})
+		}
+
+		// Return the response with the new user record
+		return c.JSON(fiber.Map{
+			"status":  "Success",
+			"message": "Success",
+			"data": fiber.Map{
+				"id":        user.ID,
+				"email":     requestBody.Email,
+				"updatedAt": user.UpdatedAt,
+				"createdAt": user.CreatedAt,
+			},
+		})
+	}
+}
+
+// UserResult holds the result of the email check
+type UserResult struct {
+	User  User
+	Error error
+}
