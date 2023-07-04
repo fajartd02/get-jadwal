@@ -224,11 +224,8 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Retrieve the user based on the given email
-		var user User
-		result := db.Preload("Schedules").Where("email = ?", email).First(&user)
-		if result.Error != nil {
-			// Handle the error if any
+		cacheUser, ok := userCache[email]
+		if !ok {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"status":  "Not Found",
 				"message": "Email is not found",
@@ -247,7 +244,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			}
 
 			// Group the schedules by day
-			for _, schedule := range user.Schedules {
+			for _, schedule := range cacheUser.ScheduleCache {
 				scheduleByDay[schedule.Day] = append(scheduleByDay[schedule.Day], schedule)
 			}
 
@@ -277,8 +274,18 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Filter the schedules based on the given day
 		var schedules []Schedule
+		// Retrieve the user based on the given email
+		var user User
+		result := db.Preload("Schedules").Where("email = ?", email).First(&user)
+		if result.Error != nil {
+			// Handle the error if any
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"status":  "Not Found",
+				"message": "Email is not found",
+			})
+		}
+
 		for _, schedule := range user.Schedules {
 			if schedule.Day == day {
 				schedules = append(schedules, schedule)
