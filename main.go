@@ -28,7 +28,9 @@ func main() {
 	}
 
 	// Auto migrate the database tables
-	db.AutoMigrate(&User{}, &Schedule{})
+	go func() {
+		db.AutoMigrate(&User{}, &Schedule{})
+	}()
 
 	// Initialize the Fiber app
 	app := fiber.New()
