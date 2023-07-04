@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -22,7 +23,7 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 			Email string `json:"email"`
 		}
 
-		if err := c.BodyParser(&requestBody); err != nil {
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
@@ -51,6 +52,9 @@ func CheckinEmail(db *gorm.DB) fiber.Handler {
 		go func() {
 			var existingUser User
 			err := db.First(&existingUser, "email = ?", requestBody.Email).Error
+			// db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+			// 	return tx.First(&existingUser, "email = ?", requestBody.Email)
+			// })
 			result := &UserResult{User: existingUser, Error: err}
 			resultChan <- result
 		}()
@@ -190,7 +194,8 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Create a new schedule record for the user
+		// Create a channel to receive the result of the goroutine
+		resultChan := make(chan error)
 		schedule := Schedule{
 			Title:     requestBody.Title,
 			UserID:    user.ID,
@@ -198,7 +203,18 @@ func AddSchedule(db *gorm.DB) fiber.Handler {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		db.Create(&schedule)
+		go func() {
+			err := db.Create(&schedule).Error
+			resultChan <- err
+		}()
+
+		// Wait for the goroutine to finish and check the result
+		if err := <-resultChan; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"status":  "Error",
+				"message": "Failed to create schedule",
+			})
+		}
 
 		// Return the response
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -256,7 +272,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 			// Initialize all days of the week
 			daysOfWeek := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 			for _, day := range daysOfWeek {
-				scheduleByDay[day] = []Schedule{}
+				scheduleByDay[day] = make([]Schedule, 0, len(user.Schedules))
 			}
 
 			// Group the schedules by day
@@ -291,7 +307,7 @@ func GetSchedules(db *gorm.DB) fiber.Handler {
 		}
 
 		// Filter the schedules based on the given day
-		var schedules []Schedule
+		var schedules = make([]Schedule, 0, len(user.Schedules))
 		for _, schedule := range user.Schedules {
 			if schedule.Day == day {
 				schedules = append(schedules, schedule)
@@ -380,7 +396,7 @@ func EditSchedule(db *gorm.DB) fiber.Handler {
 		var requestBody struct {
 			Title string `json:"title"`
 		}
-		if err := c.BodyParser(&requestBody); err != nil {
+		if err := json.Unmarshal(c.Body(), &requestBody); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"status":  "Bad Request",
 				"message": "Invalid request body",
